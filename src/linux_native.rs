@@ -21,7 +21,7 @@ use nix::{
     unistd::{read, write},
 };
 
-use super::{BusType, DeviceInfo, HidDeviceBackendBase, HidError, HidResult, WcharString};
+use super::{BusType, DeviceInfo, HidDeviceBackendBase, HidError, HidResult, WcharString, Event};
 use ioctl::{hidraw_ioc_get_feature, hidraw_ioc_grdescsize, hidraw_ioc_set_feature};
 
 // Bus values from linux/input.h
@@ -54,6 +54,24 @@ impl HidApiBackend {
             .collect::<Vec<_>>();
 
         Ok(devices)
+    }
+
+    pub fn monitor_hid_device_info() -> HidResult<impl Iterator<Item = Event>> {
+        let socket = udev::MonitorBuilder::new()?.match_subsystem("hidraw")?.listen()?;
+
+        Ok(std::iter::from_fn(move || {
+            let res = poll(&mut [PollFd::new(&socket.as_fd(), PollFlags::POLLIN)], -1).ok()?;
+
+            if res == 0 {
+                return None;
+            }
+
+            let event = socket.iter().next()?;
+            match event.event_type() {
+                udev::EventType::Add => Some(device_to_hid_device_info(&event.device()).map(|devices| devices.into_iter().map(Event::Add))),
+                _ => Some(None),
+            }
+        }).flatten().flatten())
     }
 
     pub fn open(vid: u16, pid: u16) -> HidResult<HidDevice> {

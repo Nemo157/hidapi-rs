@@ -182,6 +182,12 @@ pub struct HidApi {
     device_list: Vec<DeviceInfo>,
 }
 
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Event {
+    Add(DeviceInfo),
+}
+
 impl HidApi {
     /// Create a new hidapi context.
     ///
@@ -244,6 +250,11 @@ impl HidApi {
     /// that have been indexed, either by `refresh_devices` or `add_devices`.
     pub fn device_list(&self) -> impl Iterator<Item = &DeviceInfo> {
         self.device_list.iter()
+    }
+
+    /// Returns iterator containing information about newly attached/detached HID devices.
+    pub fn monitor(&self) -> HidResult<impl Iterator<Item = Event>> {
+        Ok(HidApiBackend::monitor_hid_device_info()?)
     }
 
     /// Open a HID device using a Vendor ID (VID) and Product ID (PID).
