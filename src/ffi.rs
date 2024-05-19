@@ -27,6 +27,17 @@ pub struct HidDeviceInfo {
     pub bus_type: HidBusType,
 }
 
+pub type HidHotplugCallbackHandle = c_int;
+
+pub type HidHotplugEvent = c_int;
+pub const HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED: HidHotplugEvent = 1 << 0;
+pub const HID_API_HOTPLUG_EVENT_DEVICE_LEFT: HidHotplugEvent = 1 << 1;
+
+pub type HidHotplugFlag = c_int;
+pub const HID_API_HOTPLUG_ENUMERATE: HidHotplugFlag = 1 << 0;
+
+type HidHotplugCallbackFn = extern "C" fn(HidHotplugCallbackHandle, *mut HidDeviceInfo, HidHotplugEvent, *mut c_void) -> c_int;
+
 #[allow(dead_code)]
 extern "C" {
     #[cfg_attr(target_os = "openbsd", link_name = "hidapi_hid_init")]
@@ -92,6 +103,19 @@ extern "C" {
         buf_size: size_t,
     ) -> c_int;
     pub fn hid_error(device: *mut HidDevice) -> *const wchar_t;
+
+    pub fn hid_hotplug_register_callback(
+        vendor_id: c_ushort,
+        product_id: c_ushort,
+        events: HidHotplugEvent,
+        flags: HidHotplugFlag,
+        callback: HidHotplugCallbackFn,
+        user_data: *mut c_void,
+        callback_handle: *mut HidHotplugCallbackHandle,
+    ) -> c_int;
+    pub fn hid_hotplug_deregister_callback(
+        callback_handle: HidHotplugCallbackHandle,
+    ) -> c_int;
 }
 
 // For documentation look at the corresponding C header file hidapi_darwin.h

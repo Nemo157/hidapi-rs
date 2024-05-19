@@ -7,7 +7,7 @@ use std::{
 
 use libc::{c_int, size_t, wchar_t};
 
-use crate::{ffi, DeviceInfo, HidDeviceBackendBase, HidError, HidResult, WcharString};
+use crate::{ffi, DeviceInfo, Event, HidDeviceBackendBase, HidError, HidResult, WcharString};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -37,6 +37,75 @@ impl HidApiBackend {
         }
 
         Ok(device_vector)
+    }
+
+    pub fn monitor_hid_device_info() -> HidResult<impl Iterator<Item = Event>> {
+        type Sender = std::sync::mpsc::Sender::<(ffi::HidHotplugEvent, HidResult<DeviceInfo>)>;
+        type Receiver = std::sync::mpsc::Receiver::<(ffi::HidHotplugEvent, HidResult<DeviceInfo>)>;
+
+        struct Iter {
+            handle: ffi::HidHotplugCallbackHandle,
+            tx: *mut Sender,
+            rx: Receiver,
+        }
+
+        impl Iterator for Iter {
+            type Item = Event;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                loop {
+                    break Some(match self.rx.recv().expect("the sender shouldn't be dropped") {
+                        (ffi::HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED, Ok(info)) => Event::Add(info),
+                        _ => continue,
+                    })
+                }
+            }
+        }
+
+        impl Drop for Iter {
+            fn drop(&mut self) {
+                unsafe { ffi::hid_hotplug_deregister_callback(self.handle) };
+                unsafe { drop(Box::from_raw(self.tx)) };
+            }
+        }
+
+        let mut handle: ffi::HidHotplugCallbackHandle = 0;
+
+        let (tx, mut rx) = std::sync::mpsc::channel();
+        let tx = Box::into_raw(Box::new(tx));
+
+        let vendor_id = 0;
+        let product_id = 0;
+        let events = ffi::HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED;
+        let flags = 0;
+
+        extern "C" fn callback(_handle: ffi::HidHotplugCallbackHandle, info: *mut ffi::HidDeviceInfo, event: ffi::HidHotplugEvent, user_data: *mut libc::c_void) -> libc::c_int {
+            let tx = user_data.cast::<Sender>();
+            let _ = unsafe { &*tx }.send((event, unsafe { conv_hid_device_info(info) }));
+            0
+        }
+
+        let user_data = tx.cast::<libc::c_void>();
+        let handle_ptr = std::ptr::addr_of_mut!(handle);
+
+        let result = unsafe { ffi::hid_hotplug_register_callback(
+            vendor_id,
+            product_id,
+            events,
+            flags,
+            callback,
+            user_data,
+            handle_ptr,
+        ) };
+
+        if result == 0 {
+            Ok(Iter { handle, tx, rx })
+        } else {
+            match Self::check_error() {
+                Ok(err) => Err(err),
+                Err(e) => Err(e),
+            }
+        }
     }
 
     pub fn open(vid: u16, pid: u16) -> HidResult<HidDevice> {
